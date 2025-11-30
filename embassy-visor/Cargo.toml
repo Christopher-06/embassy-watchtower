@@ -1,0 +1,23 @@
+[package]
+name = "embassy-visor"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+object = "0.38"         
+rustc-demangle = "0.1"  
+color-eyre = "0.6.3"
+crossterm = "0.29.0"
+ratatui = "0.29.0"
+crossbeam = {version = "0.8.4", features = ["crossbeam-channel", "crossbeam-queue"]}
+serde = {version = "1.0.228", features = ["derive"]}
+serde_json = "1.0.145"
+rayon = "1.11.0"
+anyhow = "1.0.100"
+itertools = "0.14.0"
+
+[profile.release]
+codegen-units = 1 
+lto = true 
+opt-level = "s" 
+strip = true 

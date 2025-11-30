@@ -1,0 +1,28 @@
+[package]
+name = "embassy-beacon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+defmt = {version = "*", optional = true}
+embassy-executor = { version = "*", features = ["trace"] }
+embassy-time = { version = "*" }
+
+[target.'cfg(target_arch = "xtensa")'.dependencies]
+esp-hal = "*"
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+esp-hal = "*"
+
+
+# Set defmt-debug as default feature
+[features]
+default = ["defmt"] # when no feature is chosen, use defmt
+
+defmt = ["defmt-println"] # when just dfmt is chosen, use defmt-println
+defmt-trace = ["dep:defmt"]
+defmt-debug = ["dep:defmt"]
+defmt-info = ["dep:defmt"]
+defmt-warn = ["dep:defmt"]
+defmt-error = ["dep:defmt"]
+defmt-println = ["dep:defmt"]
