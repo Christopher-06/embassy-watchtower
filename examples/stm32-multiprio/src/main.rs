@@ -110,10 +110,6 @@ async fn busy_loop_task_med_prio() {
 async fn busy_loop_task_low_prio() {
     loop {
         Timer::after(Duration::from_millis(80)).await;
-
-        let start = embassy_time::Instant::now();
-        while (embassy_time::Instant::now() - start).as_millis() < 20 {
-            // do nothing
-        }
+        cortex_m::asm::delay(20 * 16_000); // approx. for 16MHz sysclk
     }
 }
