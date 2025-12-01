@@ -14,7 +14,7 @@ impl ExecutorStats {
         let tasks = TaskStats::from_task_list(&executor.get_tasks());
 
         // Sum up CPU utilization from tasks
-        let cpu_utilization_percent = tasks.iter().map(|t| t.cpu_utilization_percent).sum();
+        let cpu_utilization_percent = executor.calculate_cpu_utilization();
 
         Self {
             name: executor.get_executor_display_name(),

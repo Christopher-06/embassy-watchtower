@@ -31,15 +31,35 @@ use crate::{
     tracing::{
         instance::HISTORY_MAX_TIME_S,
         task::TaskTraceInfo,
-        time::{ComputerTime, TimePair},
+        time::{ComputerTime, EmbassyTime, TimePair},
         trace_data::{TraceItem, TraceItemType},
     },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum PreemptedPrevState {
+    Scheduling,
+    Polling,
+}
+
+impl Into<ExecutorState> for PreemptedPrevState {
+    fn into(self) -> ExecutorState {
+        match self {
+            PreemptedPrevState::Scheduling => ExecutorState::Scheduling,
+            PreemptedPrevState::Polling => ExecutorState::Polling,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum ExecutorState {
     Idle,
     Scheduling,
+    /// Executor was preempted by another higher priority executor on the same core
+    Preempted {
+        by_executor_id: u32,
+        prev_state: PreemptedPrevState,
+    },
     Polling,
 }
 
@@ -180,13 +200,51 @@ impl ExecutorTraceInfo {
 
     /// Update belonging tasks based on a trace item
     fn update_tasks(&mut self, trace_item: &TraceItem) {
+        // Check preemption state
+        match self.state {
+            ExecutorState::Polling | ExecutorState::Scheduling => {
+                // Check if we are beeing preempted
+                if let TraceItemType::ExecutorPollStart { executor_id } = trace_item.data {
+                    if executor_id != self.executor_id && trace_item.core_id == self.core_id {
+                        // preempt
+                        let prev_state = match self.state {
+                            ExecutorState::Scheduling => PreemptedPrevState::Scheduling,
+                            ExecutorState::Polling => PreemptedPrevState::Polling,
+                            _ => unreachable!(),
+                        };
+
+                        self.set_new_state(
+                            ExecutorState::Preempted {
+                                by_executor_id: executor_id,
+                                prev_state,
+                            },
+                            trace_item.time_pair,
+                        );
+                    }
+                }
+            }
+            ExecutorState::Preempted {
+                by_executor_id,
+                prev_state,
+            } => {
+                // Check if we can resume (the higher prio executor goes back to idle)
+                if let TraceItemType::ExecutorIdle { .. } = trace_item.data {
+                    if trace_item.data.get_executor_id() == by_executor_id {
+                        // resume
+                        self.set_new_state(prev_state.into(), trace_item.time_pair);
+                    }
+                }
+            }
+            _ => {}
+        }
+
         // Check if the task is for this executor and we list it
         if trace_item.data.get_executor_id() == self.executor_id {
             // this is our executor ==> get task or create it
             if let Some(task_id) = trace_item.data.get_task_id() {
                 if self.find_task_by_id(task_id).is_none() {
                     // If the task does not exist, create it (probably a TaskNew event)
-                    let mut new_task = TaskTraceInfo::new(
+                    let new_task = TaskTraceInfo::new(
                         task_id,
                         self.executor_id,
                         self.core_id,
@@ -200,65 +258,6 @@ impl ExecutorTraceInfo {
         // publish updates to existing tasks
         for task in self.tasks.iter_mut() {
             task.update(trace_item);
-
-            // let total_duration = task.calc_total_history_duration().as_secs_f32();
-            // let running_duration = task
-            //     .calc_total_history_state_duration(crate::tracing::task::TaskTraceState::Running)
-            //     .as_secs_f32();
-
-            // // print calc_total_state_duration for debugging (for IDLE state only)
-            // println!(
-            //     "Task {} total running ratio: {:.2}% [{:?}, total: {:?}]",
-            //     task.get_task_display_name(),
-            //     if total_duration > 0.0 {
-            //         (running_duration / total_duration) * 100.0
-            //     } else {
-            //         0.0
-            //     },
-            //     running_duration,
-            //     total_duration,
-            // );
-        }
-
-        return;
-
-        // Check if the trace item is for a task
-        let task_id = match trace_item.data.get_task_id() {
-            Some(id) => id,
-            None => return,
-        };
-
-        if let Some(task) = self.find_task_by_id_mut(task_id) {
-            task.update(trace_item);
-
-            let total_duration = task.calc_total_history_duration().as_secs_f32();
-            let running_duration = task
-                .calc_total_history_state_duration(crate::tracing::task::TaskTraceState::Running)
-                .as_secs_f32();
-
-            // print calc_total_state_duration for debugging (for IDLE state only)
-            // println!(
-            //     "Task {} total running ratio: {:.2}% [{:?}, total: {:?}]",
-            //     task.get_task_display_name(),
-            //     if total_duration > 0.0 {
-            //         (running_duration / total_duration) * 100.0
-            //     } else {
-            //         0.0
-            //     },
-            //     running_duration,
-            //     total_duration,
-            // );
-        } else {
-            // If the task does not exist, create it (probably a TaskNew event)
-            let mut new_task = TaskTraceInfo::new(
-                task_id,
-                self.executor_id,
-                self.core_id,
-                trace_item.time_pair,
-            );
-            new_task.update(trace_item);
-
-            self.tasks.push(new_task);
         }
     }
 
@@ -354,5 +353,55 @@ impl ExecutorTraceInfo {
         //     StatisticMetrics::SchedulingTime { end, .. } => *end >= one_minute_ago,
         //     StatisticMetrics::PollingTime { end, .. } => *end >= one_minute_ago,
         // });
+    }
+
+    /// Extrapolate the duration spent in the current state till now (UC time)
+    fn extrapolate_current_state_duration(&self) -> EmbassyTime {
+        // get pc time diff between current time and time of state start
+        let pc_time_diff = self.state_start_time.get_pc_timestamp().diff_to_now();
+
+        // estimate current uc time based time of state start and pc time diff
+        self.state_start_time.get_uc_timestamp() + pc_time_diff
+    }
+
+    /// Calculate CPU utilization based on state history using time spent in POLLING and SCHEDULING states over total time
+    pub fn calculate_cpu_utilization(&self) -> f32 {
+        let mut total_time_s = 0.0;
+        let mut active_time_s = 0.0;
+
+        // add up all history entries
+        for entry in self.state_history.iter() {
+            let start_pc_time = entry.start_time.get_pc_timestamp();
+            let end_pc_time = entry.end_time.get_pc_timestamp();
+
+            let duration_s = end_pc_time.saturating_sub(start_pc_time).as_secs_f32();
+            total_time_s += duration_s;
+
+            match entry.state {
+                ExecutorState::Scheduling | ExecutorState::Polling => {
+                    active_time_s += duration_s;
+                }
+                _ => {}
+            }
+        }
+
+        // add current state time
+        let estimated_uc_time = self.extrapolate_current_state_duration();
+        let estimated_duration =
+            estimated_uc_time.saturating_sub(self.state_start_time.get_uc_timestamp());
+        total_time_s += estimated_duration.as_secs_f32();
+
+        match self.state {
+            ExecutorState::Scheduling | ExecutorState::Polling => {
+                active_time_s += estimated_duration.as_secs_f32();
+            }
+            _ => {}
+        }
+
+        if total_time_s > 0.0 {
+            (active_time_s / total_time_s) * 100.0
+        } else {
+            0.0
+        }
     }
 }
