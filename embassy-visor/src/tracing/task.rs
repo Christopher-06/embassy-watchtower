@@ -414,3 +414,215 @@ impl TaskTraceInfo {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::tracing::{
+        time::{ComputerTime, EmbassyTime, TimePair},
+        trace_data::{TraceItem, TraceItemType},
+    };
+
+    use super::{TaskTraceInfo, TaskTraceState};
+
+    #[test]
+    fn test_stats_simple() {
+        ComputerTime::now(); // initialize time system
+
+        let mut task = TaskTraceInfo::new(
+            1,
+            1,
+            0,
+            TimePair::new(EmbassyTime::from_millis(0), ComputerTime::now()),
+        );
+
+        // Simulate history entries
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(10), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskReadyBegin {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(30), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskExecBegin {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(45), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskExecEnd {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(70), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskReadyBegin {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(100), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskExecBegin {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(120), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskExecEnd {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // Calculate total history duration
+        let total_duration = task.calc_total_history_duration();
+        assert!(total_duration.as_millis() > 140 - 5);
+        assert!(total_duration.as_millis() < 140 + 5);
+
+        // Test SPAWNED duration
+        let spawned_duration = task.calc_total_history_state_duration(TaskTraceState::Spawned);
+        assert_eq!(spawned_duration.as_millis(), 10);
+
+        // Test IDLE duration (tolerance because of estimation till now)
+        let idle_duration = task.calc_total_history_state_duration(TaskTraceState::Idle);
+        assert!(idle_duration.as_millis() > 45 - 5);
+        assert!(idle_duration.as_millis() < 45 + 5);
+
+        // Test RUNNING duration
+        let running_duration = task.calc_total_history_state_duration(TaskTraceState::Running);
+        assert_eq!(running_duration.as_millis(), 35);
+
+        // Calculate waiting time stats
+        let (min, mean, max, count) = task.calc_min_mean_max_count_waiting_time().unwrap();
+        assert_eq!(min.as_millis(), 20); // min
+        assert_eq!(mean.as_millis(), 25); // mean
+        assert_eq!(max.as_millis(), 30); // max
+        assert_eq!(count, 2); // count
+    }
+
+    #[test]
+    fn test_stats_preempted() {
+        ComputerTime::now(); // initialize time system
+
+        let mut task = TaskTraceInfo::new(
+            1,
+            1,
+            0,
+            TimePair::new(EmbassyTime::from_millis(0), ComputerTime::now()),
+        );
+
+        // Simulate history entries with preemption
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(10), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskReadyBegin {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(30), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskExecBegin {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(45), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::ExecutorPollStart { executor_id: 2 },
+        }); // preempted here
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(70), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::ExecutorIdle { executor_id: 2 },
+        }); // resumed here
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        task.update(&TraceItem {
+            time_pair: TimePair::new(EmbassyTime::from_millis(100), ComputerTime::now()),
+            core_id: 0,
+            data: TraceItemType::TaskExecEnd {
+                executor_id: 1,
+                task_id: 1,
+            },
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // Calculate total history duration
+        let total_duration = task.calc_total_history_duration();
+        assert!(total_duration.as_millis() > 120 - 5);
+        assert!(total_duration.as_millis() < 120 + 5);
+
+        // Test SPAWNED duration
+        let spawned_duration = task.calc_total_history_state_duration(TaskTraceState::Spawned);
+        assert_eq!(spawned_duration.as_millis(), 10);
+
+        // Test IDLE duration (tolerance because of estimation till now)
+        let idle_duration = task.calc_total_history_state_duration(TaskTraceState::Idle);
+        assert!(idle_duration.as_millis() > 20 - 5);
+        assert!(idle_duration.as_millis() < 20 + 5);
+
+        // Test RUNNING duration
+        let running_duration = task.calc_total_history_state_duration(TaskTraceState::Running);
+        assert_eq!(running_duration.as_millis(), 15 + 30); // 15 before preemption, 30 after resuming
+
+        // Test PREEMPTED duration
+        let preempted_duration =
+            task.calc_total_history_state_duration(TaskTraceState::Preempted { by_executor_id: 2 });
+        assert_eq!(preempted_duration.as_millis(), 25);
+
+        // Calculate waiting time stats
+        let (min, mean, max, count) = task.calc_min_mean_max_count_waiting_time().unwrap();
+        assert_eq!(min.as_millis(), 20); // min
+        assert_eq!(mean.as_millis(), 20); // mean
+        assert_eq!(max.as_millis(), 20); // max
+        assert_eq!(count, 1); // count
+    }
+
+    #[test]
+    fn test_extrapolate_current_state_duration() {
+        ComputerTime::now(); // initialize time system
+
+        let start_time = TimePair::new(EmbassyTime::from_millis(1000), ComputerTime::now());
+        let mut task_trace = TaskTraceInfo::new(1, 1, 0, start_time);
+
+        // Simulate some time passing
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let duration = task_trace.extrapolate_current_state_duration();
+        assert!(duration.as_millis() > 1000 + 95);
+        assert!(duration.as_millis() < 1000 + 105);
+
+        // Change state and test again
+        let new_time = TimePair::new(EmbassyTime::from_millis(2000), ComputerTime::now());
+        task_trace.set_new_state(TaskTraceState::Waiting, new_time);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let duration = task_trace.extrapolate_current_state_duration();
+        assert!(duration.as_millis() > 2000 + 95);
+        assert!(duration.as_millis() < 2000 + 105);
+    }
+}
