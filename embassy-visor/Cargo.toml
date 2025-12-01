@@ -2,6 +2,8 @@
 name = "embassy-visor"
 version = "0.0.1"
 edition = "2024"
+license = "MIT"
+description = "A terminal-based viewer for Embassy-based embedded applications (Embassy Watchtower Project)"
 
 [dependencies]
 object = "0.38"         

@@ -1,6 +1,6 @@
 # Embassy Watchtower
 
-**Embassy Watchtower** is an unofficial task profiler, visualizer, and debugger designed specifically for **Embassy-based** Embedded Rust projects.
+**Embassy Watchtower** is an unofficial task profiler, visualizer, and debugger designed specifically for Embassy-based Embedded Rust projects.
 
 It operates as a dual-component system to provide real-time insight into your microcontroller's operations:
 * **Embassy Beacon:** The probe component running directly on your microcontroller.
@@ -25,25 +25,30 @@ cargo add embassy-beacon
 
 ### 2. Enable Tracing
 
-You must enable the trace feature in the Embassy Executor to allow Watchtower to hook into task events. Update your Cargo.toml:
+You must enable the trace feature in the Embassy Executor to allow `embassy-beacon` to hook into task events. Update your Cargo.toml:
 ```TOML
 [dependencies]
-embassy-executor = { version = "?.?.?", features = [..., "trace"] }
+embassy-executor = { version = "?.?.?", features = [.., "trace"] }
 ```
 
 ###  3. Initialize the Beacon
 
 Import the crate in your main.rs (or lib.rs) to register the global event listeners. This ensures the beacon starts capturing data immediately.
-Rust
 
 ```rust
 use embassy_beacon as _;
 ```
 
-### 4. Launch the Visor
+### 4. Install the Visor
+On your host machine, install the `embassy-visor` application to visualize the data:
+
+```shell
+cargo install embassy-visor
+```
+
+### 5. Launch the Visor
 
 Run the host application to start analyzing the incoming data streams and visualizing your task logs:
-Shell
 
 ```shell
 embassy-visor
@@ -62,6 +67,7 @@ This project is actively evolving. Below is the current status of features and f
 - [x] Human-readable names for Tasks and Executors (extracted via ELF parsing)
 
 - [x] Terminal User Interface (TUI) for real-time visualization
+
 - [x] Support for Multi-Priority Executors (Thread mode vs. Interrupt mode)
 
 - [x] Dual-Core Microcontroller support
@@ -70,6 +76,10 @@ This project is actively evolving. Below is the current status of features and f
 
 - [ ] Advanced Analytics (e.g., Task Runtime, Wait/Poll times) via GUI?
 
+- [ ] Advanced Log Filtering and Search Capabilities
+
+- [ ] Advanced Profiling Steps in Task Running-Phase
+
 - [ ] Extended Documentation and Examples
 
 - [ ] Unit and Integration Tests
@@ -77,6 +87,10 @@ This project is actively evolving. Below is the current status of features and f
 - [ ] File Persistence (Saving trace data to disk)
 
 - [ ] Expanded Testing/Examples for RP2040 and STM32
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Work In Progress
 
