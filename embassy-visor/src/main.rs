@@ -13,7 +13,6 @@ use crate::{
     tracing::{instance::TracingInstance, time::ComputerTime, trace_data::TraceItem},
 };
 
-mod analysis;
 mod cargo;
 mod elf_file;
 mod tracing;
