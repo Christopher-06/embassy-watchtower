@@ -19,5 +19,5 @@ pub fn core_id() -> u32 {
     //
     // Fallback: Unknown target
     //
-    u32::MAX
+    0
 }
